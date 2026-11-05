@@ -1,42 +1,130 @@
-# Reusable, NoData-safe spectral index computation.
-#
-# NDVI = (NIR - Red)  / (NIR + Red)   -> vegetation vigour
-# NDWI = (Green - NIR) / (Green + NIR) -> open water (McFeeters 1996)
-#
-# All functions accept numpy arrays plus a validity mask, so they can be unit
-# tested with synthetic data without any real satellite download.
+"""NoData-safe Sentinel-2 spectral index computation."""
+
 import numpy as np
 
 NODATA = -9999.0
 
+# Conservative SCL policy:
+# 4 = vegetation
+# 5 = not vegetated
+# 6 = water
+#
+# Classes 0, 1, 2, 3, 7, 8, 9, 10, 11 are excluded.
+# Class 2 and class 7 are excluded as a quality-control decision.
+VALID_SCL_CLASSES = (4, 5, 6)
 
-def _safe_ratio(a: np.ndarray, b: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """(a - b) / (a + b) with divide-by-zero and NoData protection."""
-    denom = a + b
-    ok = valid & np.isfinite(a) & np.isfinite(b) & (denom != 0)
-    out = np.full(np.broadcast(a, b).shape, NODATA, dtype=np.float32)
-    np.divide(a - b, denom, out=out, where=ok)
-    out[~ok] = NODATA
+
+def _safe_ratio(
+    a: np.ndarray,
+    b: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """Compute (a-b)/(a+b) with NoData and physical-range checks."""
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    valid = np.asarray(valid, dtype=bool)
+
+    try:
+        a, b, valid = np.broadcast_arrays(a, b, valid)
+    except ValueError as exc:
+        raise ValueError(
+            "Input bands and validity mask are not broadcast-compatible"
+        ) from exc
+
+    denominator = a + b
+
+    out = np.full(
+        a.shape,
+        NODATA,
+        dtype=np.float32,
+    )
+
+    # Negative BOA reflectance can be valid in Sentinel-2 L2A.
+    # Therefore, do not require denominator > 0 and do not
+    # automatically discard index values outside [-1, 1].
+    #
+    # A near-zero denominator is numerically unstable and is
+    # treated as NoData.
+    denominator_epsilon = 1e-6
+
+    good = (
+        valid
+        & np.isfinite(a)
+        & np.isfinite(b)
+        & np.isfinite(denominator)
+        & (np.abs(denominator) > denominator_epsilon)
+    )
+
+    with np.errstate(
+        divide="ignore",
+        invalid="ignore",
+        over="ignore",
+    ):
+        np.divide(
+            a - b,
+            denominator,
+            out=out,
+            where=good,
+        )
+
+    good &= np.isfinite(out)
+    out[~good] = NODATA
+
     return out
 
 
-def ndvi(nir: np.ndarray, red: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Normalised Difference Vegetation Index, NoData-safe."""
-    return _safe_ratio(nir.astype(np.float32), red.astype(np.float32), valid)
+def ndvi(
+    nir: np.ndarray,
+    red: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """Normalized Difference Vegetation Index.
+
+    NDVI = (NIR - Red) / (NIR + Red)
+
+    Inputs must be reflectance values, not uncorrected DN.
+    """
+    return _safe_ratio(nir, red, valid)
 
 
-def ndwi(green: np.ndarray, nir: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Normalised Difference Water Index (McFeeters), NoData-safe."""
-    return _safe_ratio(green.astype(np.float32), nir.astype(np.float32), valid)
+def ndwi(
+    green: np.ndarray,
+    nir: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """McFeeters Normalized Difference Water Index.
+
+    NDWI = (Green - NIR) / (Green + NIR)
+
+    This is the McFeeters definition, not the Gao vegetation-water index.
+
+    Inputs must be reflectance values, not uncorrected DN.
+    """
+    return _safe_ratio(green, nir, valid)
 
 
 def scl_cloud_mask(scl: np.ndarray) -> np.ndarray:
-    """Return a boolean mask of *valid* (non-cloud) pixels from a Sentinel-2
-    L2A Scene Classification Layer (SCL) band.
+    """Return a conservative valid-pixel mask from Sentinel-2 L2A SCL.
 
-    SCL codes treated as invalid: 0 (no data), 1 (saturated), 2 (dark), 3
-    (cloud shadow), 8 (cloud medium prob.), 9 (cloud high prob.), 10 (thin
-    cirrus), 11 (snow).
+    Retained classes:
+        4: Vegetation
+        5: Not vegetated
+        6: Water
+
+    Excluded classes:
+        0: No data
+        1: Saturated or defective
+        2: Dark area / cast-shadow class
+        3: Cloud shadows
+        7: Unclassified
+        8: Cloud medium probability
+        9: Cloud high probability
+        10: Thin cirrus
+        11: Snow or ice
+
+    This is a project quality-control policy, not a claim that
+    every excluded pixel is cloud.
     """
     scl = np.asarray(scl)
-    return ~np.isin(scl, [0, 1, 2, 3, 8, 9, 10, 11])
+
+    return np.isin(scl, VALID_SCL_CLASSES)

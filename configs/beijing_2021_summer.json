@@ -1,0 +1,22 @@
+{
+  "stac_url": "https://earth-search.aws.element84.com/v1",
+  "collection": "sentinel-2-l2a",
+  "bbox": [116.25, 39.80, 116.50, 40.05],
+  "datetime": "2021-06-01/2021-09-30",
+  "max_items": 100,
+  "cloud_cover_max": 20,
+  "item_id": "S2B_50TMK_20210601_1_L2A",
+  "bands": {
+    "B02": "blue",
+    "B03": "green",
+    "B04": "red",
+    "B08": "nir",
+    "SCL": "scl"
+  },
+  "output_crs": "EPSG:32650",
+  "resolution": 10,
+  "reflectance_dtype": "float32",
+  "nodata": -9999.0,
+  "scl_valid_classes": [4, 5, 6],
+  "denominator_epsilon": 0.000001
+}
