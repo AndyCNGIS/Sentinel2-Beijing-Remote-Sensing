@@ -1,89 +1,111 @@
 # Data Directory
 
-Raw satellite data are not committed to Git.
+This directory stores local Sentinel-2 source data and processed rasters.
 
-See `.gitignore`.
+Large raster files are excluded from Git. See the repository-level
+`.gitignore`.
 
-## Data Sources
+## Data source
 
-| Dataset | Source | Intended use |
-|---|---|---|
-| Sentinel-2 L2A BOA reflectance | Copernicus Data Space Ecosystem | Multispectral imagery |
-| ESA WorldCover 2021 v200 | ESA WorldCover | Optional land-cover reference |
-| Geofabrik Beijing OSM | Geofabrik | Optional study-area reference |
+The primary workflow uses Sentinel-2 L2A assets from the Element 84
+Earth Search STAC catalog:
 
-## Expected Local Layout
+https://earth-search.aws.element84.com/v1
+
+STAC collection:
+
+`sentinel-2-l2a`
+
+The example AOI, time range, item selection, and processing parameters
+are defined in:
+
+`configs/beijing_2021_summer.json`
+
+## Raw data layout
+
+After running `python -m scripts.download_sentinel2`, the default
+directory layout is:
 
 ```text
 data/
-├── raw/
-│   ├── sentinel2_2021/
-│   │   ├── MTD_MSIL2A.xml
-│   │   ├── B02.tif
-│   │   ├── B03.tif
-│   │   ├── B04.tif
-│   │   ├── B08.tif
-│   │   └── SCL.tif
-│   └── study_area.gpkg
+└── raw/
+    └── sentinel2/
+        └── S2B_50TMK_20210601_1_L2A/
+            ├── B02.tif
+            ├── B03.tif
+            ├── B04.tif
+            ├── B08.tif
+            ├── SCL.tif
+            └── item_metadata.json
+
+
+B02, B03, B04, and B08 are reflectance-band source assets.
+SCL is the Scene Classification Layer and remains at its native
+20 m resolution in the raw directory.
+
+item_metadata.json records the selected STAC item and relevant
+asset metadata, including the radiometric information used by
+preprocessing.
+
+An original Sentinel-2 product XML file is not required by the
+Earth Search COG workflow.
+Radiometric conversion
+The preprocessing stage reads the scale and offset values from
+STAC raster-band metadata.
+
+The conversion is:
+
+BOA reflectance = DN * scale + offset
+
+The values must be applied once. Do not apply the transformation
+again to data that has already been converted to physical reflectance.
+
+DN = 0 is treated as NoData for the reflectance bands.
+Processed data layout
+After running python -m scripts.preprocess, the expected layout is:
+data/
 └── processed/
-    ├── B02_aligned.tif
-    ├── B03_aligned.tif
-    ├── B04_aligned.tif
-    ├── B08_aligned.tif
-    └── SCL_aligned.tif
+    └── S2B_50TMK_20210601_1_L2A/
+        ├── B02.tif
+        ├── B03.tif
+        ├── B04.tif
+        ├── B08.tif
+        ├── SCL_10m.tif
+        └── preprocess_report.json
 
 
-Input Data Requirements
-The four spectral-band TIFF files must contain raw Sentinel-2
-L2A digital numbers (DN) from the same product and acquisition.
+The reflectance bands are Float32 and share a common 10 m grid.
+The configured output CRS is EPSG:32650.
 
-The MTD_MSIL2A.xml file must belong to that same product.
+B04 defines the reference grid. Other reflectance bands are aligned
+to this grid when necessary. Continuous reflectance data use
+bilinear resampling when resampling is required.
 
-Do not use this DN conversion workflow on imagery that has already
-been converted to physical reflectance by another service.
-Radiometric Conversion
-For Sentinel-2 L2A products:
+SCL is resampled to the 10 m reference grid using nearest-neighbour
+resampling because its values represent categorical classes, not
+continuous measurements.
+Index outputs
+The index-calculation script writes generated results under outputs/
+by default or to the directory specified by --output-dir.
 
-BOA reflectance = (DN + BOA_ADD_OFFSET) / QUANTIFICATION_VALUE
+Typical files include:
+- NDVI.tif
+- NDWI.tif
+- indices_report.json
+NDVI uses B08 and B04. NDWI uses the McFeeters green-NIR definition,
+using B03 and B08.
 
-The processing script reads the quantification value, processing
-baseline, and band-specific BOA offsets from product metadata.
+The configured valid SCL classes are 4, 5, and 6.
+Invalid pixels are written with the configured NoData value.
+Data licensing and attribution
+The source imagery is Sentinel-2 data accessed through Earth Search.
+Consult the applicable Copernicus Sentinel data legal notice and
+terms before redistributing source data or derived products.
 
-DN = 0 remains NoData.
-
-For processing baselines earlier than 04.00, absent BOA offsets
-are treated as zero. For baseline 04.00 and later, required
-band offsets must be present in the XML.
-Spatial Processing
-The project uses EPSG:32650 and a common 10 m output grid.
-
-B04 establishes the reference grid.
-
-B02, B03, B08 are resampled to that exact grid using bilinear
-resampling.
-
-SCL is resampled using nearest-neighbour interpolation because
-it contains categorical class codes.
-Outputs
-The following files are Float32 BOA reflectance:
-- B02_aligned.tif
-- B03_aligned.tif
-- B04_aligned.tif
-- B08_aligned.tif
-SCL_aligned.tif retains categorical values and uses 0 as NoData.
-
-Large raw and processed raster files are excluded from Git.
-Data Licensing and Attribution
-Consult the official Copernicus Data Space Ecosystem terms and
-the applicable Sentinel data legal notice before redistribution.
-
-Copernicus Sentinel data attribution should be retained when
-publishing results.
-
-Official data access:
-
-https://dataspace.copernicus.eu/
-
-Sentinel-2 processing documentation:
+Official Sentinel data information:
 
 https://sentiwiki.copernicus.eu/web/s2-processing
+
+Earth Search STAC catalog:
+
+https://earth-search.aws.element84.com/v1
